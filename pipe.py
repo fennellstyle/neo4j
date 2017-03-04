@@ -6,31 +6,44 @@ from py2neo.ogm import GraphObject, RelatedFrom, RelatedTo, Property
 
 class Uti(GraphObject):
     __primarykey__ = 'name'
+    __primarylabel__ = 'Uti'
 
     name = Property()
     inherits = RelatedTo('Uti', 'inherits')
 
     def __init__(self):
+        self.__primarykey__ = 'name'
+        self.__primarylabel__ = 'Uti'
         self.name = 'com.base'
+
+    def base(self):
+        return self.__class__.__base__
+
+    def base_instance(self):
+        return self.base()()
 
 
 class TaskUti(Uti):
     def __init__(self):
+        super(TaskUti, self).__init__()
         self.name = 'com.task'
-        self.inherits.add(Uti())
+        self.inherits.add(self.base_instance())
 
 
 class TextureTaskUti(TaskUti):
     def __init__(self):
+        super(TaskUti, self).__init__()
         self.name = 'com.task-texture'
-        self.inherits.add(TaskUti())
+        self.inherits.add(self.base_instance())
 
 
 class ProductUti(Uti):
+    __primarylabel__ = 'Uti'
+
     def __init__(self):
         super(Uti, self).__init__()
         self.name = 'com.product'
-        self.inherits.add(Uti())
+        self.inherits.add(self.base_instance())
 
 
 class Version(GraphObject):
@@ -41,19 +54,47 @@ class Version(GraphObject):
     previous = RelatedFrom('Version')
     next = RelatedTo('Version')
 
+    def __init__(self, id, previous=None):
+        self.id = id
+        if previous:
+            if isinstance(previous, Version):
+                self.previous.add(previous)
+            else:
+                self._error(type(previous))
+
+    @staticmethod
+    def _error(*args, **kwargs):
+        raise TypeError(
+            "Expected previous to be Version, got type {}".format(
+                *args)
+        )
+
 
 class Entity(GraphObject):
-    is_kind = RelatedTo(Uti, 'type')
     name = Property()
-    __primarykey__ = 'name'
+
+    is_type = RelatedTo(Uti, 'is_type')
+
+    def __init__(self, name, uti):
+        self.__primarykey__ = 'name'
+        self.name = name
+        self.is_type.add(uti)
 
 
 class Product(Entity):
-    uses = RelatedTo(Version)
+    uses = RelatedTo(Version, 'uses')
+
+    def __init__(self, name, uti):
+        self.__primarylabel__ = 'Product'
+        super(Product, self).__init__(name, uti)
 
 
 class Task(Entity):
-    delivers = RelatedTo(Product)
+    delivers = RelatedTo(Product, 'delivers')
+
+    def __init__(self, name, uti):
+        self.__primarylabel__ = 'Task'
+        super(Task, self).__init__(name, uti)
 
 
 def connect(host_port, user, pwd):
@@ -69,8 +110,8 @@ def init():
 
 
 def seed_types(graph):
-    task_uti = Uti()
-    task_uti.name = 'com.task'
+    uti = Uti()
+    task_uti = TaskUti()
     texture_task_uti = Uti()
     texture_task_uti.name = 'com.task-texture'
     texture_task_uti.inherits.add(task_uti)
@@ -79,19 +120,16 @@ def seed_types(graph):
     image_product_uti = Uti()
     image_product_uti.name = 'com.product-image'
     image_product_uti.inherits.add(product_uti)
-    for entity in (task_uti, product_uti, texture_task_uti, image_product_uti):
-        graph.push(entity)
+    graph.push(uti)
+    graph.push(task_uti)
+    # for entity in (task_uti, product_uti, texture_task_uti, image_product_uti):
+    #     graph.push(entity)
 
 
 def generate_surfacing_task(graph):
-    texture_boots = Task()
-    texture_boots.name = 'texture-boots'
-    texture_boots.is_kind.add(Uti.select(graph, 'com.task-texture').first())
-    images_product = Product()
-    images_product.name = 'textures'
-    images_product.is_kind.add(Uti.select(graph, 'com.product-image').first())
-    texture_version = Version()
-    texture_version.id = str(uuid.uuid4())
+    texture_boots = Task('texture-boots', TextureTaskUti())
+    images_product = Product('textures', ProductUti())
+    texture_version = Version(str(uuid.uuid4()))
     texture_boots.delivers.add(images_product)
     images_product.uses.add(texture_version)
     graph.push(texture_boots)
