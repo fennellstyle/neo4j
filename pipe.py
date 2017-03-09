@@ -1,7 +1,7 @@
+from hashlib import sha224
 from uuid import uuid4
 from py2neo import Graph, Node, authenticate
-from py2neo.ogm import GraphObject, RelatedFrom, RelatedTo, Property
-
+from py2neo.ogm import GraphObject, RelatedTo, Property
 
 _connections = {}
 
@@ -133,11 +133,12 @@ class Entity(GraphObject):
     name = Property()
     is_type = RelatedTo(Uti, 'is_type')
 
-    def __init__(self, name):
+    def __init__(self, name, *args, **kwargs):
         if self._label:
             self.__primarylabel__ = self._label
 
         self.name = name
+
         if self._uti:
             self.is_type.add(self._uti)
 
@@ -231,12 +232,34 @@ class Task(Entity):
         self.produces.add(product)
 
 
-class ModelingTask(Task):
+class AssetTask(Task):
+    asset = Property()
+    context = Property()
+
+    def __init__(self, name, asset, context):
+        super(AssetTask, self).__init__(name)
+        self.asset = asset
+        self.context = context
+
+
+class ModelingTask(AssetTask):
     _uti = ModelingTaskUti()
 
 
-class TextureTask(Task):
+class TextureTask(AssetTask):
     _uti = TextureTaskUti()
+
+
+class View(GraphObject):
+    __primarykey__ = 'name'
+
+    name = Property()
+    id = Property()
+    hash = Property()
+    sees = RelatedTo(Task, 'sees')
+
+    def __init__(self):
+        self.id = sha224(self.name) + '@view'
 
 
 def get_types():
@@ -251,14 +274,14 @@ def get_types():
 
 
 def generate_modeling_task():
-    model_boots = ModelingTask('model-boots')
+    model_boots = ModelingTask('model-boots', 'hiccup', 'test:context')
     geometry_product = GeometryProduct(model_boots.name + ':geometry')
     model_boots.add_product(geometry_product)
     return Subgraph([model_boots, geometry_product])
 
 
 def generate_surfacing_task(model_product):
-    texture_boots = TextureTask('texture-boots')
+    texture_boots = TextureTask('texture-boots', 'hiccup', 'test:context')
     images_product = ImageProduct(texture_boots.name + ':textures')
     images_product.add_dependency(model_product)
     texture_boots.add_product(images_product)
@@ -292,3 +315,5 @@ model_product.add_version()
 texture_product.update_dependent_version(model_product)
 model_product.add_version()
 model_product.add_version()
+other = ModelingTask('test-model', 'another_asset', 'some:context')
+graph.push(other)
