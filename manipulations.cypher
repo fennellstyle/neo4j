@@ -22,3 +22,22 @@ match (a:Uti {name:"com.task"})<-[:inherits*]-(b:Uti) return *
 
 // get the versions through dependencies
 match (tp:Product)--(d:Dependency)-->(v:Version) return *
+
+
+// make version dependency instead of product dependency
+match (t:Task {name:"texture-boots"})-[:product]->(p:Product {name:t.name + ":textures"})-[r:dependency]->(d:Dependency),(v {name:"v2"}),(v4 {name:"v4"})
+delete r
+merge (v)-[:dependency]->(d)
+merge (v4)-[:dependency]->(d)
+
+// update version 4 dependencies
+match (v4 {name:"v4"})-[de:dependency]->(d:Dependency)-[:product]->(p:Product)-[:current]->(dv:Version)
+delete de
+merge (v4)-[:dependency]->(nd:Dependency {name:"abdc-def52-314a"})
+merge (nd)-[:product]->(p)
+merge (nd)-[:version]->(dv)
+
+// point v2 at an earlier version of the model
+match (v2 {name:"v2"})-[:dependency]->(d:Dependency)-[e:version]->(cdv:Version)-[:previous]->(dv:Version)
+delete e
+merge (d)-[:version]->(dv)

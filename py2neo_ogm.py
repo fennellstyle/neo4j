@@ -89,16 +89,46 @@ class GeometryProductUti(ProductUti):
     _name = 'com.product-geometry'
 
 
+class Dependency(GraphObject):
+    __primarykey__ = 'id'
+
+    id = Property()
+    product = RelatedTo('Product', 'product')
+    version = RelatedTo('Version', 'version')
+
+    def __init__(self, product):
+        self.id = str(uuid4())
+        self.product.add(product)
+        self.version.add(product.get_current_version())
+
+    def get_product(self):
+        return iter(self.product).next()
+
+    def get_version(self):
+        return iter(self.version).next()
+
+    def get_product_and_version(self):
+        return self.get_product(), self.get_version()
+
+    def update_version(self):
+        version = self.get_product().get_current_version()
+        self.version.clear()
+        self.version.add(version)
+        connect().push(self)
+
+
 class Version(GraphObject):
     __primarykey__ = 'id'
     id = Property()
     name = Property()
     _label_id = 0
 
+    dependency = RelatedTo(Dependency, 'dependency')
     previous = RelatedTo('Version', 'previous')
+    # product = RelatedTo('Product', 'product')
     next = RelatedTo('Version', 'next')
 
-    def __init__(self, previous_version=None):
+    def __init__(self, product, previous_version=None):
         """
         Args:
             previous_version (V): Previous version node to link
@@ -112,6 +142,7 @@ class Version(GraphObject):
                 previous_version.next.add(self)
             else:
                 self._error(type(previous_version))
+        # self.product.add(product)
 
     def _incr(self):
         type(self)._label_id += 1
@@ -124,6 +155,25 @@ class Version(GraphObject):
                 *args)
         )
 
+    def get_dependent_version(self, product):
+        for dependency in self.dependency:
+            if dependency.get_product() == product:
+                return dependency.get_version()
+
+    def update_dependent_version(self, product):
+        for d in self.dependency:
+            if d.get_product() == product:
+                d.update_version()
+
+    def get_product(self, graph):
+        return graph.evaluate('match (a:Version {id: "<<id>>"}) return a//-[:prev|:next]->(p:Product) '
+                              'return p', id=self.id)
+
+        product = list(set(list(self.next) + list(self.previous)))
+        if len(product) > 1:
+            raise ValueError("Ambiguous state found.  Found more than one product.")
+        return product[0] if product else None
+
 
 class Entity(GraphObject):
     __primarykey__ = 'name'
@@ -131,7 +181,7 @@ class Entity(GraphObject):
     _uti = None
 
     name = Property()
-    is_type = RelatedTo(Uti, 'is_type')
+    uti = RelatedTo(Uti, 'uti')
 
     def __init__(self, name, *args, **kwargs):
         if self._label:
@@ -140,46 +190,21 @@ class Entity(GraphObject):
         self.name = name
 
         if self._uti:
-            self.is_type.add(self._uti)
+            self.uti.add(self._uti)
 
     def __hash__(self):
         return hash(str(self))
-
-
-class Dependency(GraphObject):
-    __primarykey__ = 'id'
-
-    id = Property()
-    to_product = RelatedTo('Product', 'to_product')
-    to_version = RelatedTo('Version', 'to_version')
-
-    def __init__(self, product):
-        self.id = str(uuid4())
-        self.to_product.add(product)
-        self.to_version.add(product.get_current_version())
-
-    def get_product(self):
-        return iter(self.to_product).next()
-
-    def get_version(self):
-        return iter(self.to_version).next()
-
-    def get_product_and_version(self):
-        return self.get_product(), self.get_version()
-
-    def update_version(self):
-        version = self.get_product().get_current_version()
-        self.to_version.clear()
-        self.to_version.add(version)
-        connect().push(self)
 
 
 class Product(Entity):
     _uti = ProductUti()
     _label = 'Product'
 
-    uses = RelatedTo(Version, 'uses')
-    depends_on = RelatedTo(Dependency, 'depends_on')
+    # latest = RelatedTo(Version, 'latest')
+    current = RelatedTo(Version, 'current')
+    published = RelatedTo(Version, 'published')
+    official = RelatedTo(Version, 'official')
+    dependency = RelatedTo(Dependency, 'dependency')
 
     def __init__(self, name):
         super(Product, self).__init__(name)
@@ -188,31 +213,52 @@ class Product(Entity):
     def add_version(self):
         current_version = None
         try:
-            current_version = iter(self.uses).next()
+            # current_version = iter(self.latest).next()
+            current_version = iter(self.current).next()
         except StopIteration:
             pass
-        new_version = Version(current_version)
+        new_version = Version(self, current_version)
         subgraph = Subgraph([new_version, current_version, self])
-        self.uses.clear()
-        self.uses.add(new_version)
+        # self.set_latest_version(new_version)
+        self.set_current_version(new_version)
         connect().push(subgraph)
         return new_version
 
-    def add_dependency(self, product):
-        self.depends_on.add(Dependency(product))
+    def set_latest_version(self, new_version):
+        self.latest.clear()
+        self.latest.add(new_version)
+
+    def set_current_version(self, new_version):
+        self.current.clear()
+        self.current.add(new_version)
+
+    def add_dependency(self, to_product):
+        # version = self.get_current_version()
+        # version.dependency.add(Dependency(product))
+        self.dependency.add(Dependency(to_product))
+
+    # def get_latest_version(self):
+    #     return iter(self.latest).next()
 
     def get_current_version(self):
-        return iter(self.uses).next()
+        return iter(self.current).next()
 
     def get_dependent_version(self, product):
-        for dependency in self.depends_on:
+        for dependency in self.dependency:
             if dependency.get_product() == product:
                 return dependency.get_version()
 
     def update_dependent_version(self, product):
-        for d in self.depends_on:
+        for d in self.dependency:
             if d.get_product() == product:
                 d.update_version()
+
+    def update_version(self):
+        # do nothing if already at latest version
+        if self.get_latest_version() == self.get_current_version():
+            return
+
+        self.set_current_version(self.get_latest_version())
 
 
 class ImageProduct(Product):
@@ -226,10 +272,10 @@ class GeometryProduct(Product):
 class Task(Entity):
     _uti = TaskUti()
     _label = 'Task'
-    produces = RelatedTo(Product, 'produces')
+    product = RelatedTo(Product, 'product')
 
     def add_product(self, product):
-        self.produces.add(product)
+        self.product.add(product)
 
 
 class AssetTask(Task):
@@ -298,22 +344,28 @@ def main():
     return graph
 
 
-def more_versions():
-    model_product.add_version()
-    texture_product.add_version()
-    texture_product.add_version()
-    texture_product.add_version()
-    for product in texture_product.depends_on:
-            texture_product.get_dependent_version(product)
+# def more_versions():
+#     model_product.add_version()
+#     texture_product.add_version()
+#     texture_product.add_version()
+#     texture_product.add_version()
+#     for product in texture_product.dependency:
+#             texture_product.get_dependent_version(product)
+#
+#
+# graph = main()
+# # graph = connect()
+# model_product = Product.select(graph, 'model-boots:geometry').first()
+# texture_product = Product.select(graph, 'texture-boots:textures').first()
+# og_version = texture_product.get_current_version()
+# model_product.add_version()
+# texture_product.update_dependent_version(model_product)
+# # model_product.add_version()
+# # model_product.add_version()
+# # other = ModelingTask('test-model', 'another_asset', 'some:context')
+# # graph.push(other)
+# # texture_product.update_version()
+# version = texture_product.add_version()
+# product = og_version.get_product(graph)
+# print product
 
-
-graph = main()
-# graph = connect()
-model_product = Product.select(graph, 'model-boots:geometry').first()
-texture_product = Product.select(graph, 'texture-boots:textures').first()
-model_product.add_version()
-texture_product.update_dependent_version(model_product)
-model_product.add_version()
-model_product.add_version()
-other = ModelingTask('test-model', 'another_asset', 'some:context')
-graph.push(other)
