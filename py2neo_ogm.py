@@ -8,7 +8,7 @@ _connections = {}
 
 def init():
     host = 'localhost:7474'
-    authenticate(host, 'neo4j', 'w1tness1')
+    authenticate(host, 'neo4j', 'neo')
     graph = Graph('http://' + host + '/db/data')
     return graph
 
@@ -93,7 +93,7 @@ class Version(GraphObject):
     __primarykey__ = 'id'
     id = Property()
     name = Property()
-    _label_id = 0
+    name_int = Property()
 
     previous = RelatedTo('Version', 'previous')
     next = RelatedTo('Version', 'next')
@@ -103,7 +103,12 @@ class Version(GraphObject):
         Args:
             previous_version (V): Previous version node to link
         """
-        self.name = 'v{}'.format(self._incr())
+        if not previous_version:
+            self.name_int = 1
+        else:
+            self.name_int = self._incr(previous_version)
+
+        self.name = self.get_name()
         self.id = str(uuid4())
 
         if previous_version is not None:
@@ -113,9 +118,23 @@ class Version(GraphObject):
             else:
                 self._error(type(previous_version))
 
-    def _incr(self):
-        type(self)._label_id += 1
-        return self._label_id
+    def get_name(self):
+        return 'v{}'.format(self.name_int)
+
+    def _incr(self, previous_version):
+        if not previous_version:
+            return self.name_int
+
+        # follow next links to get next version int
+        version_number = previous_version.name_int
+        for version in previous_version.next:
+            print 'walked to:', version.name, version.name_int
+            version_number = int(version.name_int)
+            print 'version_number set to', str(version_number)
+
+        version_number += 1
+        print 'version_number set to', str(version_number)
+        return version_number
 
     @staticmethod
     def _error(*args, **kwargs):
@@ -273,47 +292,67 @@ def get_types():
     return Subgraph(types)
 
 
-def generate_modeling_task():
-    model_boots = ModelingTask('model-boots', 'hiccup', 'test:context')
+def generate_modeling_task(graph):
+    model_boots = ModelingTask('model-hiccup-boots', 'hiccup', 'test:context')
     geometry_product = GeometryProduct(model_boots.name + ':geometry')
     model_boots.add_product(geometry_product)
-    return Subgraph([model_boots, geometry_product])
+    subgraph = Subgraph([model_boots, geometry_product])
+    graph.push(subgraph)
+    return model_boots
 
 
-def generate_surfacing_task(model_product):
+def generate_surfacing_task(graph, model_product):
     texture_boots = TextureTask('texture-boots', 'hiccup', 'test:context')
     images_product = ImageProduct(texture_boots.name + ':textures')
     images_product.add_dependency(model_product)
     texture_boots.add_product(images_product)
-    return Subgraph([texture_boots, images_product])
+    subgraph = Subgraph([texture_boots, images_product])
+    graph.push(subgraph)
+    return texture_boots
 
 
 def main():
     graph = connect()
     graph.delete_all()
-    graph.push(get_types())
-    subgraph = generate_modeling_task()
-    subgraph |= generate_surfacing_task(subgraph.nodes[-1])
-    graph.push(subgraph)
     return graph
 
 
-def more_versions():
-    model_product.add_version()
-    texture_product.add_version()
-    texture_product.add_version()
-    texture_product.add_version()
-    for product in texture_product.depends_on:
-            texture_product.get_dependent_version(product)
-
-
-graph = main()
-# graph = connect()
-model_product = Product.select(graph, 'model-boots:geometry').first()
-texture_product = Product.select(graph, 'texture-boots:textures').first()
-model_product.add_version()
-texture_product.update_dependent_version(model_product)
-model_product.add_version()
-model_product.add_version()
-other = ModelingTask('test-model', 'another_asset', 'some:context')
-graph.push(other)
+# def more_versions():
+#     model_product.add_version()
+#     texture_product.add_version()
+#     texture_product.add_version()
+#     texture_product.add_version()
+#     for product in texture_product.depends_on:
+#             texture_product.get_dependent_version(product)
+#
+#
+# graph = main()
+# # graph = connect()
+#
+# # create types
+# types = get_types()
+# graph.push(types)
+#
+# # create a modeling task
+# model_task = generate_modeling_task(graph)
+#
+# # create a surfacing task
+# model_product = iter(model_task.produces).next()
+# texture_task = generate_surfacing_task(graph, model_product)
+# texture_product = iter(texture_task.produces).next()
+#
+# # add version to model product
+# model_product.add_version()
+#
+# # Update dependency of texture_product
+# texture_product.update_dependent_version(model_product)
+#
+# # add more model versions
+# model_product.add_version()
+# model_product.add_version()
+#
+# # demonstrate users here
+#
+# # demonstrate views here
+# # other = ModelingTask('test-model', 'another_asset', 'some:context')
+# # graph.push(other)
